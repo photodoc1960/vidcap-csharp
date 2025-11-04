@@ -64,6 +64,16 @@ namespace EegScreenCapture.Models
         public string VideoFormat { get; set; } = "avi";
         public string Codec { get; set; } = "mjpeg";
         public string OutputDirectory { get; set; } = "./recordings";
+        public FFmpegConfig FFmpeg { get; set; } = new();
+    }
+
+    public class FFmpegConfig
+    {
+        public bool Enabled { get; set; } = true;
+        public string FFmpegPath { get; set; } = "ffmpeg.exe";
+        public int Crf { get; set; } = 20; // 18-23 recommended for screen recording
+        public string Preset { get; set; } = "slow"; // slow, slower, or medium
+        public bool DeleteIntermediateAvi { get; set; } = true;
     }
 
     public class StorageConfig

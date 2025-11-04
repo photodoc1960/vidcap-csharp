@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using EegScreenCapture.Models;
 using EegScreenCapture.VideoEncoder;
+using EegScreenCapture.Utils;
 
 namespace EegScreenCapture.Core
 {
@@ -84,11 +85,45 @@ namespace EegScreenCapture.Core
                 {
                     await RecordSegmentAsync(captureRegion, filePath, segmentDuration, cancellationToken);
 
+                    // Convert to H.265/MP4 if FFmpeg is enabled
+                    string finalFilePath = filePath;
+                    if (_config.Recording.FFmpeg.Enabled)
+                    {
+                        try
+                        {
+                            var converter = new FFmpegConverter(
+                                _config.Recording.FFmpeg.FFmpegPath,
+                                _config.Recording.FFmpeg.Crf,
+                                _config.Recording.FFmpeg.Preset,
+                                _config.Recording.FFmpeg.DeleteIntermediateAvi);
+
+                            // Check if FFmpeg is available
+                            if (converter.IsFFmpegAvailable())
+                            {
+                                StatusMessage?.Invoke(this, $"Converting segment {segmentNumber} to H.265...");
+                                finalFilePath = await converter.ConvertToH265Async(filePath);
+                                StatusMessage?.Invoke(this, $"Segment {segmentNumber} converted successfully");
+                            }
+                            else
+                            {
+                                Logger.Log("WARNING: FFmpeg not found. Skipping H.265 conversion.");
+                                Logger.Log($"  Please install FFmpeg and ensure '{_config.Recording.FFmpeg.FFmpegPath}' is in PATH");
+                                StatusMessage?.Invoke(this, "FFmpeg not found - saved as MJPEG/AVI");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.LogError($"FFmpeg conversion failed for segment {segmentNumber}", ex);
+                            StatusMessage?.Invoke(this, $"Conversion failed - saved as MJPEG/AVI");
+                            // Continue with original AVI file
+                        }
+                    }
+
                     // Notify segment completion
                     SegmentCompleted?.Invoke(this, new SegmentCompletedEventArgs
                     {
                         SegmentNumber = segmentNumber,
-                        FilePath = filePath,
+                        FilePath = finalFilePath,
                         PatientId = patientId,
                         StartTime = startTime
                     });
@@ -112,57 +147,95 @@ namespace EegScreenCapture.Core
 
         private async Task RecordSegmentAsync(Rectangle captureRegion, string filePath, TimeSpan duration, CancellationToken cancellationToken)
         {
-            using var aviWriter = new AviWriter(filePath, captureRegion.Width, captureRegion.Height, _config.Recording.Fps);
-
-            var startTime = DateTime.Now;
-            var frameDuration = TimeSpan.FromMilliseconds(1000.0 / _config.Recording.Fps);
+            AviWriter? aviWriter = null;
             var frameCount = 0;
 
-            while (DateTime.Now - startTime < duration && !cancellationToken.IsCancellationRequested)
+            try
             {
-                var frameStart = DateTime.Now;
+                Logger.Log($"Starting segment recording to: {filePath}");
+                aviWriter = new AviWriter(filePath, captureRegion.Width, captureRegion.Height, _config.Recording.Fps);
 
-                try
+                var startTime = DateTime.Now;
+                var frameDuration = TimeSpan.FromMilliseconds(1000.0 / _config.Recording.Fps);
+
+                while (DateTime.Now - startTime < duration && !cancellationToken.IsCancellationRequested)
                 {
-                    Bitmap? frame = null;
+                    var frameStart = DateTime.Now;
+
                     try
                     {
-                        // Capture frame (this creates a new bitmap, safe for threading)
-                        frame = ScreenCapture.CaptureRegion(captureRegion);
-
-                        // Add timestamp overlay if enabled
-                        if (_config.Ui.TimestampOverlay)
+                        Bitmap? frame = null;
+                        try
                         {
-                            AddTimestampOverlay(frame, DateTime.Now);
+                            // Capture frame (this creates a new bitmap, safe for threading)
+                            frame = ScreenCapture.CaptureRegion(captureRegion);
+
+                            // Add timestamp overlay if enabled
+                            if (_config.Ui.TimestampOverlay)
+                            {
+                                AddTimestampOverlay(frame, DateTime.Now);
+                            }
+
+                            // Add frame to video
+                            aviWriter.AddFrame(frame);
+                            frameCount++;
                         }
-
-                        // Add frame to video
-                        aviWriter.AddFrame(frame);
-                        frameCount++;
+                        finally
+                        {
+                            frame?.Dispose();
+                        }
                     }
-                    finally
+                    catch (Exception ex)
                     {
-                        frame?.Dispose();
+                        Logger.Log($"Failed to capture frame {frameCount}: {ex.Message}");
+                    }
+
+                    // Maintain target FPS
+                    var elapsed = DateTime.Now - frameStart;
+                    var delay = frameDuration - elapsed;
+                    if (delay > TimeSpan.Zero)
+                    {
+                        try
+                        {
+                            await Task.Delay(delay, cancellationToken);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            // Recording stopped by user - this is expected
+                            Logger.Log("Recording cancelled by user");
+                            break;
+                        }
                     }
                 }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Failed to capture frame {frameCount}: {ex.Message}");
-                }
 
-                // Maintain target FPS
-                var elapsed = DateTime.Now - frameStart;
-                var delay = frameDuration - elapsed;
-                if (delay > TimeSpan.Zero)
+                Logger.Log($"Recording loop completed. Captured {frameCount} frames. Finalizing...");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"ERROR in RecordSegmentAsync", ex);
+                throw;
+            }
+            finally
+            {
+                // ALWAYS finalize the video file, even if cancelled
+                if (aviWriter != null)
                 {
-                    await Task.Delay(delay, cancellationToken);
+                    try
+                    {
+                        Logger.Log($"Calling FinalizeVideo() for {frameCount} frames...");
+                        aviWriter.FinalizeVideo();
+                        aviWriter.Dispose();
+                        Logger.Log($"Segment completed: {frameCount} frames written to {filePath}");
+                        var fileInfo = new System.IO.FileInfo(filePath);
+                        Logger.Log($"File exists: {fileInfo.Exists}, Size: {fileInfo.Length / (1024 * 1024)} MB");
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogError($"ERROR during finalization", ex);
+                        throw;
+                    }
                 }
             }
-
-            // Finalize the video file
-            aviWriter.FinalizeVideo();
-
-            Console.WriteLine($"Segment completed: {frameCount} frames written to {filePath}");
         }
 
         private void AddTimestampOverlay(Bitmap frame, DateTime timestamp)

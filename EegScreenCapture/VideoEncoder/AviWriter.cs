@@ -90,7 +90,8 @@ namespace EegScreenCapture.VideoEncoder
 
             uint maxFrameSize = (uint)_frames.Max(f => f.Length);
             uint totalFrames = (uint)_frames.Count;
-            uint moviSize = (uint)_frames.Sum(f => f.Length + 8); // +8 for chunk header
+            long moviSizeLong = _frames.Sum(f => (long)f.Length + 8); // +8 for chunk header
+            uint moviSize = (uint)Math.Min(moviSizeLong, uint.MaxValue);
 
             // Calculate sizes
             uint hdrlSize = 4 + 64 + 4 + 56 + 4 + 16;
@@ -114,7 +115,7 @@ namespace EegScreenCapture.VideoEncoder
 
             uint microsecPerFrame = 1000000u / (uint)_fps;
             bw.Write(microsecPerFrame);          // dwMicroSecPerFrame
-            bw.Write(maxFrameSize * (uint)_fps); // dwMaxBytesPerSec
+            bw.Write((uint)Math.Min((long)maxFrameSize * _fps, uint.MaxValue)); // dwMaxBytesPerSec
             bw.Write(0u);                        // dwPaddingGranularity
             bw.Write(0x10u);                     // dwFlags (AVIF_HASINDEX)
             bw.Write(totalFrames);               // dwTotalFrames
@@ -160,7 +161,7 @@ namespace EegScreenCapture.VideoEncoder
             bw.Write((ushort)1);                         // biPlanes
             bw.Write((ushort)24);                        // biBitCount
             bw.Write(new[] { 'M', 'J', 'P', 'G' });     // biCompression
-            bw.Write((uint)(_width * _height * 3));      // biSizeImage
+            bw.Write((uint)Math.Min((long)_width * _height * 3, uint.MaxValue)); // biSizeImage
             bw.Write(0u);                                // biXPelsPerMeter
             bw.Write(0u);                                // biYPelsPerMeter
             bw.Write(0u);                                // biClrUsed

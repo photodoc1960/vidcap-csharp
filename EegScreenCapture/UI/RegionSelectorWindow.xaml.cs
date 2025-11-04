@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 
 namespace EegScreenCapture.UI
 {
@@ -63,12 +64,31 @@ namespace EegScreenCapture.UI
             {
                 if (SelectionRectangle.Width > 10 && SelectionRectangle.Height > 10)
                 {
-                    var x = (int)Canvas.GetLeft(SelectionRectangle);
-                    var y = (int)Canvas.GetTop(SelectionRectangle);
-                    var width = (int)SelectionRectangle.Width;
-                    var height = (int)SelectionRectangle.Height;
+                    // Get DPI scaling factor
+                    var source = PresentationSource.FromVisual(this);
+                    double dpiScaleX = 1.0;
+                    double dpiScaleY = 1.0;
+
+                    if (source != null)
+                    {
+                        dpiScaleX = source.CompositionTarget.TransformToDevice.M11;
+                        dpiScaleY = source.CompositionTarget.TransformToDevice.M22;
+                    }
+
+                    // Convert WPF logical pixels to physical screen pixels
+                    var x = (int)(Canvas.GetLeft(SelectionRectangle) * dpiScaleX);
+                    var y = (int)(Canvas.GetTop(SelectionRectangle) * dpiScaleY);
+                    var width = (int)(SelectionRectangle.Width * dpiScaleX);
+                    var height = (int)(SelectionRectangle.Height * dpiScaleY);
 
                     SelectedRegion = new Rectangle(x, y, width, height);
+
+                    // Log for debugging
+                    System.IO.File.AppendAllText("region-selection-debug.log",
+                        $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - DPI Scale: {dpiScaleX}x{dpiScaleY}\n" +
+                        $"  WPF Logical: ({Canvas.GetLeft(SelectionRectangle)}, {Canvas.GetTop(SelectionRectangle)}) {SelectionRectangle.Width}x{SelectionRectangle.Height}\n" +
+                        $"  Physical: ({x}, {y}) {width}x{height}\n");
+
                     DialogResult = true;
                     Close();
                 }
