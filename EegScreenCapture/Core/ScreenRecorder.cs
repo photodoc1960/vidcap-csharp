@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Threading;
@@ -17,6 +18,7 @@ namespace EegScreenCapture.Core
         private readonly Configuration _config;
         private CancellationTokenSource? _cancellationTokenSource;
         private bool _isRecording;
+        private readonly List<Task> _conversionTasks = new List<Task>();
 
         public event EventHandler<SegmentCompletedEventArgs>? SegmentCompleted;
         public event EventHandler<RecordingErrorEventArgs>? RecordingError;
@@ -85,45 +87,52 @@ namespace EegScreenCapture.Core
                 {
                     await RecordSegmentAsync(captureRegion, filePath, segmentDuration, cancellationToken);
 
-                    // Convert to H.265/MP4 if FFmpeg is enabled
-                    string finalFilePath = filePath;
+                    // Convert to H.265/MP4 if FFmpeg is enabled (run in background)
                     if (_config.Recording.FFmpeg.Enabled)
                     {
-                        try
-                        {
-                            var converter = new FFmpegConverter(
-                                _config.Recording.FFmpeg.FFmpegPath,
-                                _config.Recording.FFmpeg.Crf,
-                                _config.Recording.FFmpeg.Preset,
-                                _config.Recording.FFmpeg.DeleteIntermediateAvi);
+                        var segNum = segmentNumber; // Capture for closure
+                        var aviPath = filePath;     // Capture for closure
 
-                            // Check if FFmpeg is available
-                            if (converter.IsFFmpegAvailable())
-                            {
-                                StatusMessage?.Invoke(this, $"Converting segment {segmentNumber} to H.265...");
-                                finalFilePath = await converter.ConvertToH265Async(filePath);
-                                StatusMessage?.Invoke(this, $"Segment {segmentNumber} converted successfully");
-                            }
-                            else
-                            {
-                                Logger.Log("WARNING: FFmpeg not found. Skipping H.265 conversion.");
-                                Logger.Log($"  Please install FFmpeg and ensure '{_config.Recording.FFmpeg.FFmpegPath}' is in PATH");
-                                StatusMessage?.Invoke(this, "FFmpeg not found - saved as MJPEG/AVI");
-                            }
-                        }
-                        catch (Exception ex)
+                        // Start conversion in background without blocking
+                        var conversionTask = Task.Run(async () =>
                         {
-                            Logger.LogError($"FFmpeg conversion failed for segment {segmentNumber}", ex);
-                            StatusMessage?.Invoke(this, $"Conversion failed - saved as MJPEG/AVI");
-                            // Continue with original AVI file
-                        }
+                            try
+                            {
+                                var converter = new FFmpegConverter(
+                                    _config.Recording.FFmpeg.FFmpegPath,
+                                    _config.Recording.FFmpeg.Crf,
+                                    _config.Recording.FFmpeg.Preset,
+                                    _config.Recording.FFmpeg.DeleteIntermediateAvi);
+
+                                // Check if FFmpeg is available
+                                if (converter.IsFFmpegAvailable())
+                                {
+                                    StatusMessage?.Invoke(this, $"Converting segment {segNum} to H.265 (background)...");
+                                    await converter.ConvertToH265Async(aviPath);
+                                    StatusMessage?.Invoke(this, $"Segment {segNum} converted successfully");
+                                }
+                                else
+                                {
+                                    Logger.Log("WARNING: FFmpeg not found. Skipping H.265 conversion.");
+                                    Logger.Log($"  Please install FFmpeg and ensure '{_config.Recording.FFmpeg.FFmpegPath}' is in PATH");
+                                    StatusMessage?.Invoke(this, "FFmpeg not found - saved as MJPEG/AVI");
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                Logger.LogError($"FFmpeg conversion failed for segment {segNum}", ex);
+                                StatusMessage?.Invoke(this, $"Segment {segNum} conversion failed - saved as MJPEG/AVI");
+                            }
+                        });
+
+                        _conversionTasks.Add(conversionTask);
                     }
 
-                    // Notify segment completion
+                    // Notify segment completion (will be converted in background if enabled)
                     SegmentCompleted?.Invoke(this, new SegmentCompletedEventArgs
                     {
                         SegmentNumber = segmentNumber,
-                        FilePath = finalFilePath,
+                        FilePath = filePath,  // AVI path initially, will be converted to MP4 in background
                         PatientId = patientId,
                         StartTime = startTime
                     });
@@ -142,6 +151,16 @@ namespace EegScreenCapture.Core
                 }
             }
 
+            // Wait for all background conversions to complete
+            if (_conversionTasks.Count > 0)
+            {
+                StatusMessage?.Invoke(this, $"Recording stopped - waiting for {_conversionTasks.Count} conversion(s) to complete...");
+                Logger.Log($"Waiting for {_conversionTasks.Count} background conversion tasks to complete...");
+                await Task.WhenAll(_conversionTasks);
+                Logger.Log("All background conversions completed");
+                _conversionTasks.Clear();
+            }
+
             StatusMessage?.Invoke(this, "Recording stopped");
         }
 
@@ -149,13 +168,13 @@ namespace EegScreenCapture.Core
         {
             AviWriter? aviWriter = null;
             var frameCount = 0;
+            var startTime = DateTime.Now;
 
             try
             {
                 Logger.Log($"Starting segment recording to: {filePath}");
                 aviWriter = new AviWriter(filePath, captureRegion.Width, captureRegion.Height, _config.Recording.Fps);
 
-                var startTime = DateTime.Now;
                 var frameDuration = TimeSpan.FromMilliseconds(1000.0 / _config.Recording.Fps);
 
                 while (DateTime.Now - startTime < duration && !cancellationToken.IsCancellationRequested)
@@ -208,7 +227,8 @@ namespace EegScreenCapture.Core
                     }
                 }
 
-                Logger.Log($"Recording loop completed. Captured {frameCount} frames. Finalizing...");
+                var actualDuration = DateTime.Now - startTime;
+                Logger.Log($"Recording loop completed. Captured {frameCount} frames in {actualDuration.TotalSeconds:F2}s. Finalizing...");
             }
             catch (Exception ex)
             {
@@ -222,8 +242,9 @@ namespace EegScreenCapture.Core
                 {
                     try
                     {
-                        Logger.Log($"Calling FinalizeVideo() for {frameCount} frames...");
-                        aviWriter.FinalizeVideo();
+                        var actualDuration = DateTime.Now - startTime;
+                        Logger.Log($"Calling FinalizeVideo() for {frameCount} frames over {actualDuration.TotalSeconds:F2}s...");
+                        aviWriter.FinalizeVideo(actualDuration);
                         aviWriter.Dispose();
                         Logger.Log($"Segment completed: {frameCount} frames written to {filePath}");
                         var fileInfo = new System.IO.FileInfo(filePath);

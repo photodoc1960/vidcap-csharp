@@ -21,6 +21,22 @@ namespace EegScreenCapture.UI
             OutputDirectoryTextBox.Text = _config.Recording.OutputDirectory;
             TimestampOverlayCheckBox.IsChecked = _config.Ui.TimestampOverlay;
 
+            FFmpegEnabledCheckBox.IsChecked = _config.Recording.FFmpeg.Enabled;
+            FFmpegPathTextBox.Text = _config.Recording.FFmpeg.FFmpegPath;
+            CrfTextBox.Text = _config.Recording.FFmpeg.Crf.ToString();
+
+            // Set preset in combo box
+            foreach (System.Windows.Controls.ComboBoxItem item in PresetComboBox.Items)
+            {
+                if (item.Content.ToString() == _config.Recording.FFmpeg.Preset)
+                {
+                    PresetComboBox.SelectedItem = item;
+                    break;
+                }
+            }
+
+            DeleteIntermediateAviCheckBox.IsChecked = _config.Recording.FFmpeg.DeleteIntermediateAvi;
+
             BucketNameTextBox.Text = _config.Storage.GoogleCloudBucket;
             AutoUploadCheckBox.IsChecked = _config.Storage.AutoUpload;
             DeleteAfterUploadCheckBox.IsChecked = _config.Storage.DeleteAfterUpload;
@@ -41,6 +57,21 @@ namespace EegScreenCapture.UI
 
             _config.Recording.OutputDirectory = OutputDirectoryTextBox.Text;
             _config.Ui.TimestampOverlay = TimestampOverlayCheckBox.IsChecked == true;
+
+            _config.Recording.FFmpeg.Enabled = FFmpegEnabledCheckBox.IsChecked == true;
+            _config.Recording.FFmpeg.FFmpegPath = FFmpegPathTextBox.Text;
+
+            if (int.TryParse(CrfTextBox.Text, out int crf) && crf >= 0 && crf <= 51)
+            {
+                _config.Recording.FFmpeg.Crf = crf;
+            }
+
+            if (PresetComboBox.SelectedItem is System.Windows.Controls.ComboBoxItem selectedPreset)
+            {
+                _config.Recording.FFmpeg.Preset = selectedPreset.Content.ToString() ?? "slow";
+            }
+
+            _config.Recording.FFmpeg.DeleteIntermediateAvi = DeleteIntermediateAviCheckBox.IsChecked == true;
 
             _config.Storage.GoogleCloudBucket = BucketNameTextBox.Text;
             _config.Storage.AutoUpload = AutoUploadCheckBox.IsChecked == true;

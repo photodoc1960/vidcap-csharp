@@ -26,6 +26,38 @@
                 </StackPanel>
             </TabItem>
 
+            <!-- Video Encoding Settings -->
+            <TabItem Header="Video Encoding">
+                <StackPanel Margin="15">
+                    <CheckBox x:Name="FFmpegEnabledCheckBox" Content="Enable H.265/MP4 conversion" Margin="0,0,0,15" FontWeight="Bold"/>
+
+                    <Label Content="FFmpeg Path:" FontWeight="Bold"/>
+                    <TextBox x:Name="FFmpegPathTextBox" Margin="0,0,0,15" Padding="5"/>
+
+                    <Label Content="Quality (CRF):" FontWeight="Bold"/>
+                    <TextBox x:Name="CrfTextBox" Margin="0,0,0,5" Padding="5"/>
+                    <TextBlock Text="Lower = better quality (18-23 recommended for screen recording)"
+                               Foreground="Gray" FontSize="11" Margin="0,0,0,15"/>
+
+                    <Label Content="Encoding Preset:" FontWeight="Bold"/>
+                    <ComboBox x:Name="PresetComboBox" Margin="0,0,0,5" Padding="5">
+                        <ComboBoxItem Content="ultrafast"/>
+                        <ComboBoxItem Content="superfast"/>
+                        <ComboBoxItem Content="veryfast"/>
+                        <ComboBoxItem Content="faster"/>
+                        <ComboBoxItem Content="fast"/>
+                        <ComboBoxItem Content="medium"/>
+                        <ComboBoxItem Content="slow"/>
+                        <ComboBoxItem Content="slower"/>
+                        <ComboBoxItem Content="veryslow"/>
+                    </ComboBox>
+                    <TextBlock Text="Slower = better compression, but takes longer"
+                               Foreground="Gray" FontSize="11" Margin="0,0,0,15"/>
+
+                    <CheckBox x:Name="DeleteIntermediateAviCheckBox" Content="Delete intermediate AVI files after conversion" Margin="0,5,0,0"/>
+                </StackPanel>
+            </TabItem>
+
             <!-- Cloud Storage Settings -->
             <TabItem Header="Cloud Storage">
                 <StackPanel Margin="15">

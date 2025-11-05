@@ -73,12 +73,14 @@ namespace EegScreenCapture.VideoEncoder
             {
                 // Build FFmpeg command
                 // -i input.avi: Input file
+                // -vf scale: Ensure even dimensions (H.265 requirement)
                 // -c:v libx265: Use H.265/HEVC codec
                 // -crf 20: Constant Rate Factor (18-23 for screen recording)
                 // -preset slow: Encoding speed/quality tradeoff
                 // -pix_fmt yuv420p: Pixel format for compatibility
                 // -y: Overwrite output file
                 var arguments = $"-i \"{inputPath}\" " +
+                               $"-vf \"scale='if(mod(iw,2),iw+1,iw)':'if(mod(ih,2),ih+1,ih)'\" " +
                                $"-c:v libx265 " +
                                $"-crf {_crf} " +
                                $"-preset {_preset} " +
@@ -117,8 +119,8 @@ namespace EegScreenCapture.VideoEncoder
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
 
-                // Wait for completion
-                await Task.Run(() => process.WaitForExit());
+                // Wait for completion (use WaitForExitAsync in .NET 5+)
+                await process.WaitForExitAsync();
 
                 if (process.ExitCode != 0)
                 {

@@ -48,10 +48,19 @@ namespace EegScreenCapture.VideoEncoder
         /// </summary>
         public void FinalizeVideo()
         {
+            FinalizeVideo(null);
+        }
+
+        /// <summary>
+        /// Finalize and write the AVI file with actual recording duration
+        /// </summary>
+        /// <param name="actualDuration">Actual recording duration to calculate real FPS</param>
+        public void FinalizeVideo(TimeSpan? actualDuration)
+        {
             if (_isFinalized)
                 return;
 
-            WriteAviFile();
+            WriteAviFile(actualDuration);
             _isFinalized = true;
         }
 
@@ -73,10 +82,19 @@ namespace EegScreenCapture.VideoEncoder
                 ?? throw new Exception("JPEG encoder not found");
         }
 
-        private void WriteAviFile()
+        private void WriteAviFile(TimeSpan? actualDuration)
         {
             if (_frames.Count == 0)
                 return;
+
+            // Calculate actual FPS if duration provided
+            int actualFps = _fps;
+            if (actualDuration.HasValue && actualDuration.Value.TotalSeconds > 0)
+            {
+                actualFps = (int)Math.Round(_frames.Count / actualDuration.Value.TotalSeconds);
+                if (actualFps < 1) actualFps = 1; // Minimum 1 FPS
+                EegScreenCapture.Utils.Logger.Log($"Actual FPS achieved: {actualFps} ({_frames.Count} frames / {actualDuration.Value.TotalSeconds:F2}s)");
+            }
 
             // Ensure parent directory exists
             var directory = Path.GetDirectoryName(_filePath);
@@ -113,9 +131,9 @@ namespace EegScreenCapture.VideoEncoder
             bw.Write(new[] { 'a', 'v', 'i', 'h' });
             bw.Write(56u); // chunk size
 
-            uint microsecPerFrame = 1000000u / (uint)_fps;
+            uint microsecPerFrame = 1000000u / (uint)actualFps;
             bw.Write(microsecPerFrame);          // dwMicroSecPerFrame
-            bw.Write((uint)Math.Min((long)maxFrameSize * _fps, uint.MaxValue)); // dwMaxBytesPerSec
+            bw.Write((uint)Math.Min((long)maxFrameSize * actualFps, uint.MaxValue)); // dwMaxBytesPerSec
             bw.Write(0u);                        // dwPaddingGranularity
             bw.Write(0x10u);                     // dwFlags (AVIF_HASINDEX)
             bw.Write(totalFrames);               // dwTotalFrames
@@ -141,7 +159,7 @@ namespace EegScreenCapture.VideoEncoder
             bw.Write((ushort)0);                         // wLanguage
             bw.Write(0u);                                // dwInitialFrames
             bw.Write(1u);                                // dwScale
-            bw.Write((uint)_fps);                        // dwRate
+            bw.Write((uint)actualFps);                   // dwRate
             bw.Write(0u);                                // dwStart
             bw.Write(totalFrames);                       // dwLength
             bw.Write(maxFrameSize);                      // dwSuggestedBufferSize
