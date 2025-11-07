@@ -6,14 +6,17 @@ A professional screen capture application designed for EEG seizure detection mon
 
 ### Core Functionality
 - **Visual Region Selector**: Interactive click-and-drag to select EEG display area
-- **Real Video Recording**: Motion JPEG/AVI encoding at 30 FPS
+- **High-Quality Video Recording**: H.265/HEVC encoding with configurable quality (CRF 18-23)
 - **Automatic 5-Minute Segmentation**: Seamless continuous 5-minute video segments
+- **Background Conversion**: FFmpeg converts videos in background while recording continues
 - **Timestamp Overlay**: Configurable timestamp display on recordings
 - **Real-time Upload**: Automatic Google Cloud Storage upload for seizure detection analysis
 - **Medical Workflow Optimized**: Simple WPF interface designed for busy EEG monitoring technicians
 
 ### Technical Features
-- **Pure C# Implementation**: No external video encoding dependencies
+- **Hybrid C#/FFmpeg Architecture**: Pure C# recording with FFmpeg post-processing for optimal compression
+- **Background Processing**: Video conversion runs in parallel with recording
+- **Accurate Frame Rate Tracking**: Automatically adjusts to system capabilities
 - **Windows Native**: Built with WPF for optimal Windows performance
 - **Reliable Recording**: No gaps between segments, continuous monitoring
 - **Google Cloud Integration**: Automatic upload with retry logic
@@ -24,6 +27,7 @@ A professional screen capture application designed for EEG seizure detection mon
 ### Prerequisites
 - Windows 10/11
 - .NET 8.0 SDK or Runtime
+- FFmpeg (for H.265/MP4 conversion) - [Download FFmpeg](https://www.gyan.dev/ffmpeg/builds/)
 - Visual Studio 2022 (for development) or just .NET Runtime (for running)
 - Google Cloud Storage account with service account credentials (optional for cloud upload)
 
@@ -49,6 +53,20 @@ dotnet run --project EegScreenCapture
 3. Build Solution (Ctrl+Shift+B)
 4. Run (F5) or find executable in `bin/Release/net8.0-windows/`
 
+### FFmpeg Setup (Required for H.265 Conversion)
+
+#### Option 1: Place ffmpeg.exe with Application
+1. Download FFmpeg from [gyan.dev/ffmpeg/builds](https://www.gyan.dev/ffmpeg/builds/)
+2. Extract `ffmpeg-release-essentials.zip`
+3. Copy `ffmpeg.exe` to the same folder as `EegScreenCapture.exe`
+
+#### Option 2: Add FFmpeg to System PATH
+1. Download and extract FFmpeg as above
+2. Add the FFmpeg `bin` folder to your system PATH
+3. Verify with: `ffmpeg -version`
+
+**Note**: The application will record in MJPEG/AVI format if FFmpeg is not found, but H.265/MP4 conversion provides 8-15x smaller files.
+
 ### Configuration
 
 The application creates a `config.json` file on first run:
@@ -60,7 +78,14 @@ The application creates a `config.json` file on first run:
     "segmentDurationMinutes": 5,
     "videoFormat": "avi",
     "codec": "mjpeg",
-    "outputDirectory": "./recordings"
+    "outputDirectory": "./recordings",
+    "ffmpeg": {
+      "enabled": true,
+      "ffmpegPath": "ffmpeg.exe",
+      "crf": 20,
+      "preset": "slow",
+      "deleteIntermediateAvi": true
+    }
   },
   "storage": {
     "googleCloudBucket": "your-eeg-bucket-name",
@@ -101,17 +126,17 @@ The application creates a `config.json` file on first run:
 ### Local Files
 ```
 recordings/
-├── EEG_PATIENT001_20241008_143022_seg001.avi
-├── EEG_PATIENT001_20241008_143022_seg002.avi
-├── EEG_PATIENT001_20241008_143022_seg003.avi
+├── EEG_PATIENT001_20241008_143022_seg001.mp4
+├── EEG_PATIENT001_20241008_143022_seg002.mp4
+├── EEG_PATIENT001_20241008_143022_seg003.mp4
 └── ...
 ```
 
 ### Google Cloud Storage Structure
 ```
 your-eeg-bucket/
-├── EEG_PATIENT001_20241008_143022_seg001.avi
-├── EEG_PATIENT001_20241008_143022_seg002.avi
+├── EEG_PATIENT001_20241008_143022_seg001.mp4
+├── EEG_PATIENT001_20241008_143022_seg002.mp4
 └── ...
 ```
 
@@ -125,7 +150,8 @@ EegScreenCapture/
 │   ├── ScreenCapture.cs          # Screen capture functionality
 │   └── ScreenRecorder.cs         # Recording loop with segmentation
 ├── VideoEncoder/
-│   └── AviWriter.cs              # Motion JPEG/AVI encoder
+│   ├── AviWriter.cs              # Motion JPEG/AVI encoder
+│   └── FFmpegConverter.cs        # H.265/MP4 conversion
 ├── Models/
 │   └── Configuration.cs          # Configuration management
 ├── Cloud/
@@ -133,6 +159,8 @@ EegScreenCapture/
 ├── UI/
 │   ├── RegionSelectorWindow.xaml # Visual region selector
 │   └── SettingsWindow.xaml       # Settings editor
+├── Utils/
+│   └── Logger.cs                 # Debug logging
 ├── MainWindow.xaml               # Main application window
 └── App.xaml                      # Application entry point
 ```
@@ -205,11 +233,27 @@ dotnet publish -c Release -r win-x64 --self-contained
 
 ## Video Format
 
+### Output Format
+- **Container**: MP4
+- **Codec**: H.265/HEVC (libx265)
+- **Quality**: CRF 20 (configurable 0-51, lower = better quality)
+- **Encoding Preset**: Slow (configurable: ultrafast to veryslow)
+- **File Size**: ~20-50 MB per 5-minute segment at 1080p (8-15x compression vs MJPEG)
+- **Playback**: Compatible with VLC, modern media players, and web browsers
+
+### Intermediate Format (Auto-deleted)
 - **Container**: AVI
-- **Codec**: Motion JPEG (MJPEG)
-- **Quality**: 60% (configurable in code)
-- **File Size**: ~200-250 MB per 5-minute segment (varies by resolution)
-- **Playback**: Compatible with VLC, Windows Media Player, and most video players
+- **Codec**: Motion JPEG (MJPEG) at 60% quality
+- **Purpose**: Fast real-time recording, converted to H.265 in background
+- **Size**: ~200-400 MB per 5-minute segment (automatically deleted after conversion)
+
+### FFmpeg Settings (Configurable in Settings UI)
+- **CRF**: 18-23 recommended for screen recording (default: 20)
+- **Preset**: Encoding speed vs compression tradeoff (default: "slow")
+  - `ultrafast`, `superfast`, `veryfast` - Faster encoding, larger files
+  - `fast`, `medium` - Balanced
+  - `slow`, `slower`, `veryslow` - Better compression, slower encoding
+- **Background Conversion**: Enabled by default, converts while recording continues
 
 ## License
 
