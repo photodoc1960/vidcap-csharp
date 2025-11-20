@@ -2,11 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using EegScreenCapture.Models;
 using EegScreenCapture.VideoEncoder;
 using EegScreenCapture.Utils;
+using EegScreenCapture.Cloud;
 
 namespace EegScreenCapture.Core
 {
@@ -19,12 +21,16 @@ namespace EegScreenCapture.Core
         private CancellationTokenSource? _cancellationTokenSource;
         private bool _isRecording;
         private readonly List<Task> _conversionTasks = new List<Task>();
+        private readonly List<PendingSegment> _pendingSegments = new List<PendingSegment>();
+        private CloudUploader? _cloudUploader;
 
         public event EventHandler<SegmentCompletedEventArgs>? SegmentCompleted;
         public event EventHandler<RecordingErrorEventArgs>? RecordingError;
         public event EventHandler<string>? StatusMessage;
+        public event EventHandler<SeizureDetectionEventArgs>? SeizureDetected;
 
         public bool IsRecording => _isRecording;
+        public IReadOnlyList<PendingSegment> PendingSegments => _pendingSegments.AsReadOnly();
 
         public ScreenRecorder(Configuration config)
         {
@@ -136,6 +142,10 @@ namespace EegScreenCapture.Core
                         PatientId = patientId,
                         StartTime = startTime
                     });
+
+                    // Upload to cloud and start polling for seizure detection (in background)
+                    var currentSegNum = segmentNumber;
+                    _ = Task.Run(async () => await UploadAndPollForResultAsync(filePath, currentSegNum, patientId));
 
                     segmentNumber++;
                 }
@@ -285,6 +295,103 @@ namespace EegScreenCapture.Core
         private string GenerateFileName(string patientId, int segmentNumber, DateTime startTime)
         {
             return $"EEG_{patientId}_{startTime:yyyyMMdd_HHmmss}_seg{segmentNumber:D3}.avi";
+        }
+
+        /// <summary>
+        /// Upload segment to cloud and poll for seizure detection result
+        /// </summary>
+        private async Task UploadAndPollForResultAsync(string aviFilePath, int segmentNumber, string patientId)
+        {
+            try
+            {
+                // Wait for FFmpeg conversion to complete (if enabled)
+                string finalFilePath = aviFilePath;
+                if (_config.Recording.FFmpeg.Enabled)
+                {
+                    // Convert .avi extension to .mp4 for the final file path
+                    finalFilePath = Path.ChangeExtension(aviFilePath, ".mp4");
+
+                    // Wait up to 30 minutes for conversion to complete
+                    var waitTime = TimeSpan.Zero;
+                    var maxWait = TimeSpan.FromMinutes(30);
+                    while (!File.Exists(finalFilePath) && waitTime < maxWait)
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(10));
+                        waitTime += TimeSpan.FromSeconds(10);
+                    }
+
+                    if (!File.Exists(finalFilePath))
+                    {
+                        Logger.Log($"FFmpeg conversion did not complete for {aviFilePath}, uploading AVI instead");
+                        finalFilePath = aviFilePath;
+                    }
+                }
+
+                // Create pending segment tracker
+                var segment = new PendingSegment(finalFilePath, segmentNumber, patientId);
+                lock (_pendingSegments)
+                {
+                    _pendingSegments.Add(segment);
+                }
+
+                // Initialize cloud uploader if needed
+                if (_cloudUploader == null)
+                {
+                    _cloudUploader = new CloudUploader(_config);
+                    _cloudUploader.SeizureDetected += (sender, e) =>
+                    {
+                        StatusMessage?.Invoke(this, $"🚨 SEIZURE DETECTED - {e.PatientId} Segment {e.SegmentNumber}");
+                        SeizureDetected?.Invoke(this, e);
+                    };
+                }
+
+                // Upload the file
+                Logger.Log($"Uploading {segment.FileName} to cloud...");
+                StatusMessage?.Invoke(this, $"Uploading segment {segmentNumber}...");
+
+                var uploaded = await _cloudUploader.UploadWithRetryAsync(finalFilePath);
+
+                if (uploaded)
+                {
+                    Logger.Log($"Upload successful: {segment.FileName}");
+                    StatusMessage?.Invoke(this, $"Segment {segmentNumber} uploaded - polling for results...");
+
+                    // Start polling for results (2 minute intervals, 30 minute timeout)
+                    var result = await _cloudUploader.PollForResultAsync(
+                        segment,
+                        timeout: TimeSpan.FromMinutes(30),
+                        pollInterval: TimeSpan.FromMinutes(2)
+                    );
+
+                    // Update segment with result
+                    lock (_pendingSegments)
+                    {
+                        segment.Result = result;
+                    }
+
+                    if (result.HasValue)
+                    {
+                        var status = result.Value == 0 ? "✅ Normal" : "🚨 SEIZURE DETECTED";
+                        StatusMessage?.Invoke(this, $"Segment {segmentNumber}: {status}");
+                        Logger.Log($"Result for {segment.FileName}: {status}");
+                    }
+                    else
+                    {
+                        StatusMessage?.Invoke(this, $"Segment {segmentNumber}: No result (timeout)");
+                        Logger.Log($"No result received for {segment.FileName} after polling timeout");
+                    }
+                }
+                else
+                {
+                    Logger.Log($"Upload failed for {segment.FileName}");
+                    StatusMessage?.Invoke(this, $"Segment {segmentNumber}: Upload failed");
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Error in upload/poll for segment {segmentNumber}", ex);
+                StatusMessage?.Invoke(this, $"Segment {segmentNumber}: Error - {ex.Message}");
+            }
         }
     }
 

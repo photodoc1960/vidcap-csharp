@@ -1,8 +1,12 @@
 using System;
+using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Drawing;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
+using EegScreenCapture.Cloud;
 using EegScreenCapture.Core;
 using EegScreenCapture.Models;
 using EegScreenCapture.UI;
@@ -17,6 +21,7 @@ namespace EegScreenCapture
         private DateTime? _recordingStartTime;
         private DispatcherTimer? _uiUpdateTimer;
         private int _currentSegment = 1;
+        private readonly ObservableCollection<SegmentStatusViewModel> _segmentStatuses;
 
         public MainWindow()
         {
@@ -25,11 +30,24 @@ namespace EegScreenCapture
             // Load configuration
             _config = Configuration.Load();
             _recorder = new ScreenRecorder(_config);
+            _segmentStatuses = new ObservableCollection<SegmentStatusViewModel>();
+
+            // Bind segment status list
+            SegmentStatusList.ItemsSource = _segmentStatuses;
 
             // Subscribe to recorder events
             _recorder.SegmentCompleted += OnSegmentCompleted;
             _recorder.RecordingError += OnRecordingError;
             _recorder.StatusMessage += OnStatusMessage;
+            _recorder.SeizureDetected += OnSeizureDetected;
+
+            // Start a timer to update pending segment statuses
+            var statusUpdateTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(5)
+            };
+            statusUpdateTimer.Tick += UpdateSegmentStatuses;
+            statusUpdateTimer.Start();
 
             AddLogMessage("Application started. Please configure capture region and enter patient ID.");
         }
@@ -185,6 +203,102 @@ namespace EegScreenCapture
         {
             var timestamp = DateTime.Now.ToString("HH:mm:ss");
             MessageLogTextBlock.Text += $"[{timestamp}] {message}\n";
+        }
+
+        private void OnSeizureDetected(object? sender, SeizureDetectionEventArgs e)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                // Show alert message box
+                var result = MessageBox.Show(
+                    $"SEIZURE DETECTED!\n\nPatient: {e.PatientId}\nSegment: {e.SegmentNumber}\nFile: {e.FileName}\n\nPlease review the recording.",
+                    "⚠️ SEIZURE ALERT",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning
+                );
+
+                AddLogMessage($"🚨 SEIZURE DETECTED - {e.PatientId} Segment {e.SegmentNumber}");
+            });
+        }
+
+        private void UpdateSegmentStatuses(object? sender, EventArgs e)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                // Get current pending segments from recorder
+                var pendingSegments = _recorder.PendingSegments.ToList();
+
+                // Update existing statuses
+                foreach (var segment in pendingSegments)
+                {
+                    var existing = _segmentStatuses.FirstOrDefault(s => s.FileName == segment.FileName);
+                    if (existing != null)
+                    {
+                        existing.Result = segment.Result;
+                    }
+                    else
+                    {
+                        // Add new segment status
+                        _segmentStatuses.Add(new SegmentStatusViewModel
+                        {
+                            SegmentNumber = segment.SegmentNumber,
+                            FileName = segment.FileName,
+                            Result = segment.Result,
+                            PatientId = segment.PatientId
+                        });
+                    }
+                }
+
+                // Keep only last 20 segments for display
+                while (_segmentStatuses.Count > 20)
+                {
+                    _segmentStatuses.RemoveAt(0);
+                }
+            });
+        }
+    }
+
+    /// <summary>
+    /// View model for displaying segment status in UI
+    /// </summary>
+    public class SegmentStatusViewModel : INotifyPropertyChanged
+    {
+        private int? _result;
+
+        public int SegmentNumber { get; set; }
+        public string FileName { get; set; } = string.Empty;
+        public string PatientId { get; set; } = string.Empty;
+
+        public int? Result
+        {
+            get => _result;
+            set
+            {
+                if (_result != value)
+                {
+                    _result = value;
+                    OnPropertyChanged(nameof(Result));
+                    OnPropertyChanged(nameof(Status));
+                }
+            }
+        }
+
+        public string SegmentLabel => $"Seg {SegmentNumber}:";
+
+        public string Status
+        {
+            get
+            {
+                if (Result == null) return "⏳ Pending";
+                return Result == 0 ? "✅ Normal" : "🚨 SEIZURE";
+            }
+        }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        protected void OnPropertyChanged(string propertyName)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
         }
     }
 }

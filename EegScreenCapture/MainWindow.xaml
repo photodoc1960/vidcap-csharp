@@ -10,6 +10,7 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
@@ -46,15 +47,55 @@
             <TextBlock x:Name="TimeTextBlock" Text="" Margin="0,5,0,0"/>
         </StackPanel>
 
+        <!-- Seizure Detection Status -->
+        <GroupBox Grid.Row="5" Header="Seizure Detection Status" Margin="0,0,0,10">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="100">
+                <ItemsControl x:Name="SegmentStatusList">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Padding="5" Margin="2">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{Binding SegmentLabel}" FontWeight="Bold" Margin="0,0,10,0"/>
+                                    <TextBlock Grid.Column="1" Text="{Binding FileName}" Foreground="Gray"/>
+                                    <TextBlock Grid.Column="2" Text="{Binding Status}" FontWeight="Bold">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Result}" Value="0">
+                                                        <Setter Property="Foreground" Value="Green"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding Result}" Value="1">
+                                                        <Setter Property="Foreground" Value="Red"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding Result}" Value="{x:Null}">
+                                                        <Setter Property="Foreground" Value="Orange"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </GroupBox>
+
         <!-- Message Log -->
-        <GroupBox Grid.Row="5" Header="Messages" Margin="0,0,0,15">
+        <GroupBox Grid.Row="6" Header="Messages" Margin="0,0,0,15">
             <ScrollViewer VerticalScrollBarVisibility="Auto">
                 <TextBlock x:Name="MessageLogTextBlock" TextWrapping="Wrap" Padding="5"/>
             </ScrollViewer>
         </GroupBox>
 
         <!-- Settings Button -->
-        <StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right">
+        <StackPanel Grid.Row="7" Orientation="Horizontal" HorizontalAlignment="Right">
             <Button Content="⚙️ Settings" Padding="10,5" Click="SettingsButton_Click"/>
         </StackPanel>
     </Grid>
